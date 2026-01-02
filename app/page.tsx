@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Trash2, Check, Clock, Headphones, Zap, Calendar as CalendarIcon, Flag, 
-  BarChart3, Minimize2, Maximize2, Palette 
+  BarChart3, Minimize2, Maximize2 
 } from "lucide-react";
 import useSound from "use-sound";
 import confetti from "canvas-confetti";
@@ -33,16 +33,15 @@ const generateWeekDates = (pivotDate: Date) => {
 };
 
 export default function VibeOS() {
-  // --- STATES ---
   const [activeTab, setActiveTab] = useState<Tab>("Tasks");
   const [todos, setTodos] = useState<Todo[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
   
-  // New Feature 1: THEME SYSTEM
+  // Theme System
   const [currentThemeName, setCurrentThemeName] = useState<ThemeType>("Nebula");
   const theme = THEMES.find(t => t.name === currentThemeName) || THEMES[0];
   
-  // New Feature 4: ZEN MODE & STATS
+  // Zen & Stats
   const [zenMode, setZenMode] = useState(false);
   const [showStats, setShowStats] = useState(false);
 
@@ -67,16 +66,12 @@ export default function VibeOS() {
   const [playPop] = useSound(SOUND_POP, { volume: 0.5 });
   const [playSuccess] = useSound(SOUND_SUCCESS, { volume: 0.5 });
 
-  // Init Data
   useEffect(() => {
     const timer = setTimeout(() => {
       const savedTodos = localStorage.getItem("vibe-os-todos-v5");
       if (savedTodos) setTodos(JSON.parse(savedTodos));
-      
       const savedHabits = localStorage.getItem("vibe-os-habits-v5");
-      if (savedHabits) setHabits(JSON.parse(savedHabits)); // Giản lược cho gọn
-      
-      // Load Theme
+      if (savedHabits) setHabits(JSON.parse(savedHabits)); 
       const savedTheme = localStorage.getItem("vibe-os-theme-v5");
       if (savedTheme) setCurrentThemeName(savedTheme as ThemeType);
 
@@ -86,7 +81,6 @@ export default function VibeOS() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Save Data
   useEffect(() => {
     if (isInitiating.current) return;
     localStorage.setItem("vibe-os-todos-v5", JSON.stringify(todos));
@@ -94,7 +88,6 @@ export default function VibeOS() {
     localStorage.setItem("vibe-os-theme-v5", currentThemeName);
   }, [todos, habits, currentThemeName]);
 
-  // Music & Timer logic (Keep same)
   useEffect(() => {
     if (audioRef.current) musicPlaying ? audioRef.current.play().catch(() => setMusicPlaying(false)) : audioRef.current.pause();
   }, [musicPlaying]);
@@ -104,10 +97,7 @@ export default function VibeOS() {
     if (isTimerRunning) {
       interval = setInterval(() => {
         setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(interval); setIsTimerRunning(false); playSuccess(); setMusicPlaying(false);
-            return 0;
-          }
+          if (prev <= 1) { clearInterval(interval); setIsTimerRunning(false); playSuccess(); setMusicPlaying(false); return 0; }
           return prev - 1;
         });
       }, 1000);
@@ -115,101 +105,65 @@ export default function VibeOS() {
     return () => clearInterval(interval);
   }, [isTimerRunning, playSuccess]);
 
-  // Actions
   const handleAdd = (text: string, category: Category, emoji: string, priority: Priority) => {
     playPop();
-    if (activeTab === "Tasks") {
-      setTodos([{ id: Date.now(), text, completed: false, category, emoji, priority, dueDate: selectedDate }, ...todos]);
-    } else {
-      setHabits([{ id: Date.now(), text, streak: 0, emoji, lastCompleted: null, completedToday: false }, ...habits]);
-    }
+    if (activeTab === "Tasks") setTodos([{ id: Date.now(), text, completed: false, category, emoji, priority, dueDate: selectedDate }, ...todos]);
+    else setHabits([{ id: Date.now(), text, streak: 0, emoji, lastCompleted: null, completedToday: false }, ...habits]);
   };
   const toggleTodo = (id: number) => {
-    setTodos(prev => prev.map(t => {
-        if (t.id === id && !t.completed) playSuccess();
-        return t.id === id ? { ...t, completed: !t.completed } : t;
-    }));
+    setTodos(prev => prev.map(t => { if (t.id === id && !t.completed) playSuccess(); return t.id === id ? { ...t, completed: !t.completed } : t; }));
   };
-  const toggleHabit = (id: number) => { /* Giữ nguyên logic cũ */
+  const toggleHabit = (id: number) => {
      const today = new Date().toISOString().split('T')[0];
-     setHabits(prev => prev.map(h => {
-        if (h.id === id) {
-            if (!h.completedToday) { playSuccess(); confetti({ particleCount: 50, spread: 60, origin: { y: 0.7 } }); return { ...h, completedToday: true, streak: h.streak + 1, lastCompleted: today }; } 
-            return { ...h, completedToday: false, streak: Math.max(0, h.streak - 1), lastCompleted: null };
-        } return h;
-    }));
+     setHabits(prev => prev.map(h => { if (h.id === id) { if (!h.completedToday) { playSuccess(); confetti({ particleCount: 50, spread: 60, origin: { y: 0.7 } }); return { ...h, completedToday: true, streak: h.streak + 1, lastCompleted: today }; } return { ...h, completedToday: false, streak: Math.max(0, h.streak - 1), lastCompleted: null }; } return h; }));
   };
   const deleteItem = (id: number) => { activeTab === "Tasks" ? setTodos(prev => prev.filter(t => t.id !== id)) : setHabits(prev => prev.filter(h => h.id !== id)); };
 
-  // Render Helpers
   const filteredTodos = todos.filter(t => t.dueDate === selectedDate);
   const progress = filteredTodos.length > 0 ? Math.round((filteredTodos.filter(t => t.completed).length / filteredTodos.length) * 100) : 0;
   const formatDateTitle = (dateStr: string) => new Date(dateStr).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
-  if (!isClient) return <div className="min-h-screen bg-black flex items-center justify-center text-neutral-600 animate-pulse">Initializing Vibe v5...</div>;
+  if (!isClient) return <div className="min-h-screen bg-black flex items-center justify-center text-neutral-600 animate-pulse">Loading...</div>;
 
-  // --- ZEN MODE RENDER ---
   if (zenMode) {
     return (
         <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-8 relative overflow-hidden">
             <audio ref={audioRef} src={LOFI_STREAM_URL} preload="none" />
             <div className={`absolute inset-0 opacity-20 transition-colors duration-1000 ${theme.bg}`} />
-            
-            {/* Zen Controls */}
             <div className="absolute top-8 right-8 flex gap-4 z-20">
                  <button onClick={() => setMusicPlaying(!musicPlaying)} className={`p-4 rounded-full transition-all ${musicPlaying ? theme.bg + " text-white animate-pulse" : "bg-neutral-900 text-neutral-500"}`}><Headphones size={24} /></button>
                  <button onClick={() => setZenMode(false)} className="p-4 rounded-full bg-neutral-900 text-neutral-500 hover:text-white"><Minimize2 size={24}/></button>
             </div>
-
-            {/* Main Zen Content */}
             <div className="z-10 text-center space-y-12">
-                <div className={`text-[12rem] font-mono font-bold tracking-tighter leading-none bg-clip-text text-transparent bg-gradient-to-b from-white to-neutral-600`}>
-                    {Math.floor(timeLeft/60)}:{timeLeft%60 < 10 ? '0' : ''}{timeLeft%60}
-                </div>
-                {timerTask ? (
-                    <motion.div initial={{opacity: 0}} animate={{opacity: 1}} className="text-2xl text-neutral-400 flex items-center justify-center gap-3">
-                        <Zap className={theme.text} /> {timerTask}
-                    </motion.div>
-                ) : (
-                    <p className="text-neutral-600 text-xl">No active task. Just breathe.</p>
-                )}
-
-                <button onClick={() => setIsTimerRunning(!isTimerRunning)} className="px-12 py-4 rounded-full bg-white text-black text-xl font-bold hover:scale-105 transition-transform">
-                    {isTimerRunning ? "PAUSE" : "START FOCUS"}
-                </button>
+                <div className={`text-[12rem] font-mono font-bold tracking-tighter leading-none bg-clip-text text-transparent bg-gradient-to-b from-white to-neutral-600`}>{Math.floor(timeLeft/60)}:{timeLeft%60 < 10 ? '0' : ''}{timeLeft%60}</div>
+                {timerTask ? <motion.div initial={{opacity: 0}} animate={{opacity: 1}} className="text-2xl text-neutral-400 flex items-center justify-center gap-3"><Zap className={theme.text} /> {timerTask}</motion.div> : <p className="text-neutral-600 text-xl">Just breathe.</p>}
+                <button onClick={() => setIsTimerRunning(!isTimerRunning)} className="px-12 py-4 rounded-full bg-white text-black text-xl font-bold hover:scale-105 transition-transform">{isTimerRunning ? "PAUSE" : "START FOCUS"}</button>
             </div>
         </div>
     );
   }
 
-  // --- NORMAL RENDER ---
   return (
     <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-4 relative overflow-hidden font-sans selection:bg-purple-500/30">
       <audio ref={audioRef} src={LOFI_STREAM_URL} preload="none" />
-      
-      {/* Dynamic Background based on Theme */}
       <div className={`absolute top-[-10%] left-[-10%] w-[600px] h-[600px] rounded-full blur-[120px] transition-all duration-[2000ms] ${theme.glow} ${musicPlaying ? "scale-110 opacity-50" : "scale-100 opacity-20"}`} />
       <div className={`absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] rounded-full blur-[120px] transition-all duration-[2000ms] ${theme.glow} ${musicPlaying ? "scale-110 opacity-50" : "scale-100 opacity-20"}`} />
 
-      {/* Modals */}
       <VibeTimer show={showTimer} onClose={() => setShowTimer(false)} timeLeft={timeLeft} setTimeLeft={setTimeLeft} isRunning={isTimerRunning} setIsRunning={setIsTimerRunning} mode={timerMode} setMode={setTimerMode} taskName={timerTask} musicPlaying={musicPlaying} setMusicPlaying={setMusicPlaying} theme={theme} />
       <VibeCalendar show={showCalendar} onClose={() => setShowCalendar(false)} selectedDate={selectedDate} onSelectDate={setSelectedDate} todos={todos} />
       <VibeStats show={showStats} onClose={() => setShowStats(false)} todos={todos} habits={habits} theme={theme} />
 
       <div className="w-full max-w-xl z-10">
-        
-        {/* HEADER */}
         <div className="flex items-center justify-between mb-6">
-            <h1 className="text-2xl font-bold flex items-center gap-2">Vibe OS <span className={`text-xs ${theme.bg} text-white px-2 py-0.5 rounded-full`}>v5.0</span></h1>
+            <h1 className="text-2xl font-bold flex items-center gap-2">Vibe OS <span className={`text-xs ${theme.bg} text-white px-2 py-0.5 rounded-full shadow-lg`}>v5.0</span></h1>
             <div className="flex items-center gap-2">
                  <button onClick={() => setMusicPlaying(!musicPlaying)} className={`p-2.5 rounded-full transition-all ${musicPlaying ? theme.bg + " text-white animate-pulse" : "bg-neutral-800 text-neutral-500"}`}><Headphones size={18} /></button>
                  <button onClick={() => setShowTimer(true)} className="p-2.5 rounded-full bg-neutral-800 text-neutral-500 hover:text-white transition-all"><Clock size={18} /></button>
                  <button onClick={() => setShowStats(true)} className="p-2.5 rounded-full bg-neutral-800 text-neutral-500 hover:text-white transition-all"><BarChart3 size={18} /></button>
-                 <button onClick={() => setZenMode(true)} className="p-2.5 rounded-full bg-neutral-800 text-neutral-500 hover:text-white transition-all" title="Enter Zen Mode"><Maximize2 size={18} /></button>
+                 <button onClick={() => setZenMode(true)} className="p-2.5 rounded-full bg-neutral-800 text-neutral-500 hover:text-white transition-all"><Maximize2 size={18} /></button>
             </div>
         </div>
 
-        {/* WEEK STRIP */}
         {activeTab === "Tasks" && (
             <div className="mb-2">
                 <div className="flex items-center justify-between mb-2 px-1">
@@ -223,9 +177,9 @@ export default function VibeOS() {
                         const isToday = new Date().toISOString().split('T')[0] === dateStr;
                         return (
                             <button key={dateStr} onClick={() => setSelectedDate(dateStr)}
-                                className={`flex flex-col items-center justify-center w-14 h-16 rounded-2xl transition-all border shrink-0 ${isSelected ? `bg-white text-black border-white shadow-lg scale-105` : "bg-neutral-900/40 border-neutral-800 text-neutral-500 hover:bg-neutral-800"}`}>
+                                className={`flex flex-col items-center justify-center w-14 h-16 rounded-2xl transition-all border shrink-0 ${isSelected ? `${theme.bg} text-white border-transparent shadow-lg scale-105` : "bg-neutral-900/40 border-neutral-800 text-neutral-500 hover:bg-neutral-800"}`}>
                                 <span className="text-[10px] font-medium uppercase">{date.toLocaleDateString('en-US', { weekday: 'short' })}</span>
-                                <span className={`text-lg font-bold ${isSelected ? "text-black" : isToday ? theme.text : "text-white"}`}>{date.getDate()}</span>
+                                <span className={`text-lg font-bold ${isSelected ? "text-white" : isToday ? theme.text : "text-white"}`}>{date.getDate()}</span>
                             </button>
                         )
                     })}
@@ -233,17 +187,14 @@ export default function VibeOS() {
             </div>
         )}
 
-        {/* TAB SWITCHER */}
         <div className="flex bg-neutral-900/50 p-1 rounded-xl mb-6 border border-neutral-800">
             {TABS.map(tab => (
                 <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-2 text-xs font-medium rounded-lg transition-all ${activeTab === tab ? "bg-neutral-800 text-white shadow" : "text-neutral-500 hover:text-neutral-300"}`}>{tab}</button>
             ))}
         </div>
 
-        {/* INPUT (Pass theme logic manually to styles here or refactor VibeInput to accept theme - For now just style wrapper) */}
-        <VibeInput onAdd={handleAdd} activeTab={activeTab} selectedDateStr={selectedDate} />
+        <VibeInput onAdd={handleAdd} activeTab={activeTab} selectedDateStr={selectedDate} theme={theme} />
 
-        {/* LIST */}
         <div className="space-y-3 pb-32">
             <AnimatePresence mode="popLayout">
                 {activeTab === "Tasks" ? (
@@ -287,18 +238,12 @@ export default function VibeOS() {
             </AnimatePresence>
         </div>
 
-        {/* THEME SWITCHER FOOTER */}
         <div className="fixed bottom-6 left-0 right-0 flex justify-center gap-3 z-40 opacity-50 hover:opacity-100 transition-opacity p-2">
             {THEMES.map(t => (
-                <button 
-                    key={t.name} 
-                    onClick={() => setCurrentThemeName(t.name)}
-                    className={`w-6 h-6 rounded-full border-2 transition-all ${t.bg} ${currentThemeName === t.name ? 'border-white scale-125 ring-2 ring-white/50' : 'border-transparent'}`}
-                    title={t.name}
-                />
+                <button key={t.name} onClick={() => setCurrentThemeName(t.name)}
+                    className={`w-6 h-6 rounded-full border-2 transition-all ${t.bg} ${currentThemeName === t.name ? 'border-white scale-125 ring-2 ring-white/50' : 'border-transparent'}`} title={t.name} />
             ))}
         </div>
-
       </div>
     </div>
   );

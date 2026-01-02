@@ -3,9 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  Plus, Trash2, Check, Sparkles, Tag, Clock, X, 
-  Play, Pause, RotateCcw, Calendar, AlertCircle, 
-  Edit2, Save, Volume2, VolumeX 
+  Plus, Trash2, Check, Clock, X, 
+  Play, Pause, RotateCcw, Calendar, 
+  Headphones, Repeat, Zap, Moon, Coffee 
 } from "lucide-react";
 import useSound from "use-sound";
 import confetti from "canvas-confetti";
@@ -13,6 +13,8 @@ import confetti from "canvas-confetti";
 // --- TYPES ---
 type Category = "Code" | "Design" | "Life";
 type Priority = "High" | "Medium" | "Low";
+type Tab = "Tasks" | "Habits";
+type TimerMode = "Focus" | "Short Break" | "Long Break";
 
 interface Todo {
   id: number;
@@ -20,7 +22,15 @@ interface Todo {
   completed: boolean;
   category: Category;
   priority: Priority;
-  dueDate: string; // YYYY-MM-DD
+  dueDate: string;
+}
+
+interface Habit {
+  id: number;
+  text: string;
+  streak: number;
+  lastCompleted: string | null;
+  completedToday: boolean;
 }
 
 // --- CONSTANTS ---
@@ -30,416 +40,354 @@ const CATEGORIES: { name: Category; color: string }[] = [
   { name: "Life", color: "bg-green-500" },
 ];
 
-const PRIORITIES: { name: Priority; color: string }[] = [
-  { name: "High", color: "text-red-400 border-red-400" },
-  { name: "Medium", color: "text-yellow-400 border-yellow-400" },
-  { name: "Low", color: "text-blue-400 border-blue-400" },
+// 1. FIX LỖI TYPE: Thêm dấu [] vào cuối để báo đây là mảng
+const TIMER_MODES: { mode: TimerMode; minutes: number; icon: any }[] = [
+  { mode: "Focus", minutes: 25, icon: Zap },
+  { mode: "Short Break", minutes: 5, icon: Coffee },
+  { mode: "Long Break", minutes: 15, icon: Moon },
 ];
 
-// Link âm thanh online (Dùng tạm nếu bạn chưa có file trong thư mục public)
+const LOFI_STREAM_URL = "https://stream.zeno.fm/0r0xa792kwzuv"; 
 const SOUND_POP = "https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3"; 
 const SOUND_SUCCESS = "https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3";
-const SOUND_DELETE = "https://assets.mixkit.co/active_storage/sfx/2572/2572-preview.mp3";
 
-export default function VibeTodo() {
+export default function VibeOS() {
   // --- STATES ---
-  const [todos, setTodos] = useState<Todo[]>([]);
+  const [activeTab, setActiveTab] = useState<Tab>("Tasks");
   
-  // Form States
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [habits, setHabits] = useState<Habit[]>([]);
+  
   const [input, setInput] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<Category>("Life");
-  const [selectedPriority, setSelectedPriority] = useState<Priority>("Medium");
+  const [selectedPriority] = useState<Priority>("Medium"); // Giữ lại để mở rộng sau này
   const [dueDate, setDueDate] = useState("");
 
-  // Edit State
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editText, setEditText] = useState("");
-
-  // System States
   const [isClient, setIsClient] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [musicPlaying, setMusicPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   
-  // Focus Mode States
-  const [focusMode, setFocusMode] = useState<{ active: boolean; task: string | null }>({ active: false, task: null });
+  // Timer States
+  const [showTimer, setShowTimer] = useState(false);
+  const [timerMode, setTimerMode] = useState<TimerMode>("Focus");
   const [timeLeft, setTimeLeft] = useState(25 * 60);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [timerTask, setTimerTask] = useState<string | null>(null);
 
   const isInitiating = useRef(true);
+  const [playPop] = useSound(SOUND_POP, { volume: 0.5 });
+  const [playSuccess] = useSound(SOUND_SUCCESS, { volume: 0.5 });
 
-  // --- SOUNDS ---
-  const [playPop] = useSound(SOUND_POP, { volume: 0.5, soundEnabled });
-  const [playSuccess] = useSound(SOUND_SUCCESS, { volume: 0.5, soundEnabled });
-  const [playDelete] = useSound(SOUND_DELETE, { volume: 0.3, soundEnabled });
-
-  // --- LOGIC: INIT & SAVE ---
+  // --- INITIALIZATION ---
   useEffect(() => {
     const timer = setTimeout(() => {
-      const saved = localStorage.getItem("vibe-data-ultimate");
-      if (saved) {
-        try { setTodos(JSON.parse(saved)); } catch (e) { console.error(e); }
+      const savedTodos = localStorage.getItem("vibe-os-todos");
+      if (savedTodos) setTodos(JSON.parse(savedTodos));
+
+      const savedHabits = localStorage.getItem("vibe-os-habits");
+      if (savedHabits) {
+        const parsedHabits: Habit[] = JSON.parse(savedHabits);
+        const today = new Date().toISOString().split('T')[0];
+        
+        const updatedHabits = parsedHabits.map(h => {
+            if (h.lastCompleted !== today) {
+                return { ...h, completedToday: false };
+            }
+            return h;
+        });
+        setHabits(updatedHabits);
       }
+
       setIsClient(true);
       isInitiating.current = false;
     }, 100);
     return () => clearTimeout(timer);
   }, []);
 
+  // --- SAVE DATA ---
   useEffect(() => {
     if (isInitiating.current) return;
-    localStorage.setItem("vibe-data-ultimate", JSON.stringify(todos));
-  }, [todos]);
+    localStorage.setItem("vibe-os-todos", JSON.stringify(todos));
+    localStorage.setItem("vibe-os-habits", JSON.stringify(habits));
+  }, [todos, habits]);
 
-  // --- LOGIC: TIMER ---
+  // --- MUSIC LOGIC ---
+  useEffect(() => {
+    if (audioRef.current) {
+      if (musicPlaying) {
+        audioRef.current.play().catch(e => console.log("Audio play error:", e));
+      } else {
+        audioRef.current.pause();
+      }
+    }
+  }, [musicPlaying]);
+
+  // 2. FIX LỖI TIMER LOOP: Kiểm tra hết giờ bên trong setInterval
   useEffect(() => {
     let interval: NodeJS.Timeout;
+
     if (isTimerRunning) {
       interval = setInterval(() => {
         setTimeLeft((prev) => {
           if (prev <= 1) {
+            // Hết giờ: Dừng timer, Phát nhạc, Tắt nhạc nền
+            clearInterval(interval);
             setIsTimerRunning(false);
             playSuccess();
+            setMusicPlaying(false);
             return 0;
           }
           return prev - 1;
         });
       }, 1000);
     }
+
     return () => clearInterval(interval);
   }, [isTimerRunning, playSuccess]);
 
-  // --- LOGIC: CONFETTI ---
-  useEffect(() => {
-    if (!isInitiating.current && todos.length > 0 && todos.every(t => t.completed)) {
-      confetti({
-        particleCount: 100,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ['#a855f7', '#ec4899', '#3b82f6']
-      });
-      playSuccess();
-    }
-  }, [todos, playSuccess]);
-
   // --- ACTIONS ---
-  const addTodo = (e?: React.FormEvent) => {
-    e?.preventDefault();
+  const addTodo = (e: React.FormEvent) => {
+    e.preventDefault();
     if (!input.trim()) return;
-    
     playPop();
-    const newTodo: Todo = { 
-      id: Date.now(), 
-      text: input, 
-      completed: false,
-      category: selectedCategory,
-      priority: selectedPriority,
-      dueDate: dueDate
-    };
-    setTodos((prev) => [newTodo, ...prev]);
-    setInput("");
-    setDueDate("");
+    
+    if (activeTab === "Tasks") {
+        const newTodo: Todo = { 
+          id: Date.now(), text: input, completed: false, 
+          category: selectedCategory, priority: selectedPriority, dueDate: dueDate
+        };
+        setTodos([newTodo, ...todos]);
+    } else {
+        const newHabit: Habit = {
+            id: Date.now(), text: input, streak: 0, 
+            lastCompleted: null, completedToday: false
+        };
+        setHabits([newHabit, ...habits]);
+    }
+    setInput(""); setDueDate("");
   };
 
   const toggleTodo = (id: number) => {
-    setTodos((prev) => prev.map((t) => {
-        if (t.id === id) {
-            if (!t.completed) playSuccess();
-            return { ...t, completed: !t.completed };
-        }
-        return t;
+    setTodos(prev => prev.map(t => {
+        if (t.id === id && !t.completed) playSuccess();
+        return t.id === id ? { ...t, completed: !t.completed } : t;
     }));
   };
 
-  const deleteTodo = (id: number) => {
-    playDelete();
-    setTodos((prev) => prev.filter((t) => t.id !== id));
+  const toggleHabit = (id: number) => {
+    const today = new Date().toISOString().split('T')[0];
+    setHabits(prev => prev.map(h => {
+        if (h.id === id) {
+            if (!h.completedToday) {
+                playSuccess();
+                confetti({ particleCount: 50, spread: 60, origin: { y: 0.7 } });
+                return { ...h, completedToday: true, streak: h.streak + 1, lastCompleted: today };
+            } else {
+                return { ...h, completedToday: false, streak: Math.max(0, h.streak - 1), lastCompleted: null };
+            }
+        }
+        return h;
+    }));
   };
 
-  const startEditing = (todo: Todo) => {
-    setEditingId(todo.id);
-    setEditText(todo.text);
+  const deleteItem = (id: number) => {
+    if (activeTab === "Tasks") setTodos(prev => prev.filter(t => t.id !== id));
+    else setHabits(prev => prev.filter(h => h.id !== id));
   };
 
-  const saveEdit = (id: number) => {
-    setTodos(prev => prev.map(t => t.id === id ? { ...t, text: editText } : t));
-    setEditingId(null);
-    playPop();
+  // 3. FIX LỖI FIND/MAP: Code an toàn hơn
+  const changeTimerMode = (mode: TimerMode) => {
+      setTimerMode(mode);
+      // Dùng || 25 để tránh lỗi nếu không tìm thấy
+      const min = TIMER_MODES.find(m => m.mode === mode)?.minutes || 25;
+      setTimeLeft(min * 60);
+      setIsTimerRunning(false);
   };
 
-  // --- HELPERS ---
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const progress = todos.length > 0 
-    ? Math.round((todos.filter(t => t.completed).length / todos.length) * 100) 
-    : 0;
-
-  if (!isClient) return <div className="min-h-screen bg-neutral-950 flex items-center justify-center text-neutral-600">Loading Vibe...</div>;
+  if (!isClient) return <div className="min-h-screen bg-black flex items-center justify-center text-neutral-600">Booting Vibe OS...</div>;
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-4 relative overflow-hidden font-sans selection:bg-purple-500/30">
       
-      {/* Background Blobs */}
-      <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-purple-600/20 rounded-full blur-[120px] animate-pulse pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-blue-600/20 rounded-full blur-[120px] animate-pulse pointer-events-none" />
+      <audio ref={audioRef} src={LOFI_STREAM_URL} preload="none" />
 
-      {/* --- FOCUS MODE OVERLAY --- */}
+      <div className={`absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-purple-600/20 rounded-full blur-[120px] transition-all duration-1000 ${musicPlaying ? "animate-pulse scale-110" : ""}`} />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px]" />
+
+      {/* --- POMODORO MODAL --- */}
       <AnimatePresence>
-        {focusMode.active && (
+        {showTimer && (
           <motion.div 
-            initial={{ opacity: 0, backdropFilter: "blur(0px)" }}
-            animate={{ opacity: 1, backdropFilter: "blur(12px)" }}
-            exit={{ opacity: 0, backdropFilter: "blur(0px)" }}
-            className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
           >
-            <div className="bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl text-center w-full max-w-sm relative">
-              <button 
-                onClick={() => { setFocusMode({ active: false, task: null }); setIsTimerRunning(false); }}
-                className="absolute top-4 right-4 text-neutral-500 hover:text-white"
-              >
-                <X size={24} />
-              </button>
-              <h2 className="text-xl font-bold mb-8 text-white/90 line-clamp-2">{focusMode.task}</h2>
-              <div className="text-7xl font-mono font-bold mb-8 tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-white to-neutral-500">
-                {formatTime(timeLeft)}
-              </div>
-              <div className="flex justify-center gap-4">
-                <button 
-                  onClick={() => setIsTimerRunning(!isTimerRunning)}
-                  className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform"
-                >
-                  {isTimerRunning ? <Pause size={28} fill="black" /> : <Play size={28} fill="black" className="ml-1"/>}
-                </button>
-                <button 
-                  onClick={() => { setTimeLeft(25*60); setIsTimerRunning(false); }}
-                  className="w-16 h-16 rounded-full bg-neutral-800 text-white flex items-center justify-center hover:bg-neutral-700 transition-colors"
-                >
-                  <RotateCcw size={24} />
-                </button>
-              </div>
+            <div className="bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl w-full max-w-sm relative">
+                <button onClick={() => setShowTimer(false)} className="absolute top-4 right-4 text-neutral-500 hover:text-white"><X size={24} /></button>
+                
+                {/* Timer Modes */}
+                <div className="flex justify-center gap-2 mb-8">
+                    {TIMER_MODES.map((m) => (
+                        <button key={m.mode} onClick={() => changeTimerMode(m.mode)}
+                            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${timerMode === m.mode ? "bg-purple-500 text-white" : "bg-neutral-800 text-neutral-400"}`}
+                        >
+                            {m.mode}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Clock Display */}
+                <div className="text-center mb-8 relative">
+                    <div className="text-8xl font-mono font-bold tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-white to-neutral-500">
+                        {formatTime(timeLeft)}
+                    </div>
+                    {timerTask && <p className="text-neutral-400 mt-2 text-sm line-clamp-1">Current Focus: {timerTask}</p>}
+                </div>
+
+                {/* Controls */}
+                <div className="flex justify-center gap-6 items-center">
+                    <button 
+                        onClick={() => { 
+                            const min = TIMER_MODES.find(m => m.mode === timerMode)?.minutes || 25;
+                            setTimeLeft(min * 60); 
+                            setIsTimerRunning(false); 
+                        }} 
+                        className="p-4 rounded-full bg-neutral-800 text-neutral-400 hover:text-white"
+                    >
+                        <RotateCcw size={20} />
+                    </button>
+                    
+                    <button onClick={() => { setIsTimerRunning(!isTimerRunning); if(!musicPlaying && !isTimerRunning) setMusicPlaying(true); }} className="w-20 h-20 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-all shadow-[0_0_30px_rgba(255,255,255,0.3)]">
+                        {isTimerRunning ? <Pause size={32} fill="black" /> : <Play size={32} fill="black" className="ml-1"/>}
+                    </button>
+                    
+                    <button onClick={() => setMusicPlaying(!musicPlaying)} className={`p-4 rounded-full bg-neutral-800 transition-colors ${musicPlaying ? "text-purple-400 bg-purple-400/10" : "text-neutral-400"}`}>
+                        <Headphones size={20} />
+                    </button>
+                </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
+      {/* --- MAIN UI --- */}
       <div className="w-full max-w-xl z-10">
-        {/* HEADER */}
+        
+        {/* Header Bar */}
         <div className="flex items-center justify-between mb-8">
-            <div>
-              <h1 className="text-3xl font-bold flex gap-2 items-center bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-400">
-                Ultimate Flow <Sparkles size={20} className="text-yellow-200" />
-              </h1>
-              <p className="text-neutral-500 text-sm mt-1">Master your day, one click at a time.</p>
-            </div>
-            
-            <div className="flex items-center gap-4">
-                 <button onClick={() => setSoundEnabled(!soundEnabled)} className="text-neutral-500 hover:text-white transition-colors">
-                    {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+            <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-400 flex items-center gap-2">
+                Vibe OS <span className="text-xs bg-neutral-800 text-neutral-400 px-2 py-0.5 rounded-full border border-neutral-700">v1.1</span>
+            </h1>
+            <div className="flex items-center gap-3">
+                 <button onClick={() => setMusicPlaying(!musicPlaying)} className={`p-2 rounded-full transition-all ${musicPlaying ? "bg-purple-500 text-white animate-pulse" : "bg-neutral-800 text-neutral-500"}`}>
+                    <Headphones size={18} />
                  </button>
-                {/* Circular Progress */}
-                <div className="relative w-14 h-14 flex items-center justify-center">
-                    <svg className="w-full h-full transform -rotate-90">
-                        <circle cx="28" cy="28" r="24" stroke="currentColor" strokeWidth="4" fill="transparent" className="text-neutral-800" />
-                        <circle cx="28" cy="28" r="24" stroke="currentColor" strokeWidth="4" fill="transparent" 
-                            className="text-purple-500 transition-all duration-1000 ease-out" 
-                            strokeDasharray={150} 
-                            strokeDashoffset={150 - (150 * progress) / 100} 
-                            strokeLinecap="round"
-                        />
-                    </svg>
-                    <span className="absolute text-[10px] font-bold">{progress}%</span>
-                </div>
+                 <button onClick={() => setShowTimer(true)} className="p-2 rounded-full bg-neutral-800 text-neutral-500 hover:text-white transition-all">
+                    <Clock size={18} />
+                 </button>
             </div>
         </div>
 
+        {/* Tabs */}
+        <div className="flex p-1 bg-neutral-900/80 rounded-xl mb-6 border border-neutral-800">
+            {(["Tasks", "Habits"] as Tab[]).map(tab => (
+                <button 
+                    key={tab} 
+                    onClick={() => setActiveTab(tab)}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === tab ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-500 hover:text-neutral-300"}`}
+                >
+                    {tab === "Tasks" ? "To-do List" : "Daily Habits"}
+                </button>
+            ))}
+        </div>
+
         {/* INPUT AREA */}
-        <motion.div layout className="bg-neutral-900/60 backdrop-blur-xl border border-neutral-800 p-4 rounded-2xl mb-8 shadow-2xl">
-          <form onSubmit={addTodo} className="flex gap-2 mb-4">
+        <motion.div layout className="bg-neutral-900/60 backdrop-blur-xl border border-neutral-800 p-4 rounded-2xl mb-6">
+          <form onSubmit={addTodo} className="flex gap-2 mb-3">
             <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Thêm nhiệm vụ mới..."
+              type="text" value={input} onChange={(e) => setInput(e.target.value)}
+              placeholder={activeTab === "Tasks" ? "Thêm công việc mới..." : "Thêm thói quen (VD: Đọc sách)..."}
               className="flex-1 bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500/50 transition-colors placeholder:text-neutral-600"
             />
-            <button
-              type="submit"
-              className="bg-gradient-to-br from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white px-5 rounded-xl transition-all shadow-lg hover:shadow-purple-500/20"
-            >
-              <Plus size={24} />
-            </button>
+            <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white px-4 rounded-xl transition-colors"><Plus size={24} /></button>
           </form>
           
-          {/* Controls: Category, Priority, Date */}
-          <div className="flex flex-wrap items-center gap-3">
-             {/* Categories */}
-            <div className="flex bg-neutral-950/50 rounded-lg p-1 border border-neutral-800">
-                {CATEGORIES.map(cat => (
-                <button
-                    key={cat.name}
-                    type="button"
-                    onClick={() => { playPop(); setSelectedCategory(cat.name); }}
-                    className={`text-xs px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
-                    selectedCategory === cat.name 
-                        ? `${cat.color} text-white shadow-md` 
-                        : "text-neutral-400 hover:text-white"
-                    }`}
-                >
-                    {cat.name}
-                </button>
-                ))}
-            </div>
-
-            {/* Priority */}
-            <div className="flex bg-neutral-950/50 rounded-lg p-1 border border-neutral-800">
-                {PRIORITIES.map(p => (
-                    <button
-                        key={p.name}
-                        type="button"
-                        onClick={() => { playPop(); setSelectedPriority(p.name); }}
-                        className={`p-1.5 rounded-md transition-all ${selectedPriority === p.name ? "bg-neutral-700 text-white" : "text-neutral-500 hover:text-white"}`}
-                        title={p.name}
-                    >
-                        <AlertCircle size={14} className={p.color.split(' ')[0]} fill={selectedPriority === p.name ? "currentColor" : "none"} />
-                    </button>
-                ))}
-            </div>
-
-            {/* Date Picker */}
-            <div className="relative group">
-                <div className="flex items-center gap-2 bg-neutral-950/50 border border-neutral-800 px-3 py-1.5 rounded-lg text-xs text-neutral-400 hover:text-white transition-colors cursor-pointer">
-                    <Calendar size={14} />
-                    <input 
-                        type="date" 
-                        value={dueDate}
-                        onChange={(e) => setDueDate(e.target.value)}
-                        className="bg-transparent border-none outline-none text-neutral-300 w-24 cursor-pointer  [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-50"
-                    />
+          {/* Controls (Only for Tasks) */}
+          {activeTab === "Tasks" && (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex bg-neutral-950/50 rounded-lg p-1 border border-neutral-800">
+                    {CATEGORIES.map(cat => (
+                        <button key={cat.name} onClick={() => setSelectedCategory(cat.name)}
+                            className={`text-[10px] px-2 py-1 rounded-md transition-all ${selectedCategory === cat.name ? cat.color + " text-white" : "text-neutral-400"}`}>
+                            {cat.name}
+                        </button>
+                    ))}
                 </div>
-            </div>
-          </div>
+                <div className="flex items-center gap-2 bg-neutral-950/50 border border-neutral-800 px-2 py-1 rounded-lg text-xs text-neutral-400 hover:text-white transition-colors">
+                    <Calendar size={12} />
+                    <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="bg-transparent border-none outline-none text-neutral-300 w-20 cursor-pointer opacity-80" />
+                </div>
+              </div>
+          )}
         </motion.div>
 
-        {/* TODO LIST */}
-        <div className="space-y-3 pb-20">
-          <AnimatePresence initial={false} mode="popLayout">
-            {todos.map((todo) => (
-              <motion.div
-                key={todo.id}
-                layout
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-                className={`
-                  group relative flex items-center justify-between p-4 rounded-xl border transition-all duration-300
-                  ${todo.completed 
-                    ? "bg-neutral-900/20 border-transparent opacity-50" 
-                    : "bg-neutral-900/60 border-neutral-800 hover:border-neutral-700 shadow-lg hover:shadow-xl hover:-translate-y-1"
-                  }
-                `}
-              >
-                {/* Checkbox & Content */}
-                <div className="flex items-center gap-4 flex-1 min-w-0">
-                  <button
-                    onClick={() => toggleTodo(todo.id)}
-                    className={`
-                      w-6 h-6 rounded-lg border flex items-center justify-center transition-all flex-shrink-0
-                      ${todo.completed 
-                        ? "bg-purple-500 border-purple-500 text-white scale-100" 
-                        : "border-neutral-600 hover:border-purple-400 text-transparent scale-90 hover:scale-100"
-                      }
-                    `}
+        {/* --- LIST VIEW --- */}
+        <div className="space-y-3 pb-24">
+          <AnimatePresence mode="popLayout">
+            {activeTab === "Tasks" ? (
+                // TASKS LIST
+                todos.length > 0 ? todos.map((todo) => (
+                  <motion.div
+                    key={todo.id} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }}
+                    className={`group flex items-center justify-between p-4 rounded-xl border transition-all ${todo.completed ? "bg-neutral-900/20 border-transparent opacity-50" : "bg-neutral-900/60 border-neutral-800 hover:border-neutral-700 hover:shadow-lg"}`}
                   >
-                    <Check size={14} strokeWidth={4} />
-                  </button>
-                  
-                  <div className="flex flex-col flex-1 gap-1">
-                     {editingId === todo.id ? (
-                        <form onSubmit={(e) => { e.preventDefault(); saveEdit(todo.id); }} className="flex items-center gap-2">
-                            <input 
-                                autoFocus
-                                type="text" 
-                                value={editText} 
-                                onChange={(e) => setEditText(e.target.value)}
-                                onBlur={() => saveEdit(todo.id)}
-                                className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1 text-sm w-full outline-none focus:border-purple-500"
-                            />
-                        </form>
-                     ) : (
-                        <span 
-                            onDoubleClick={() => startEditing(todo)}
-                            className={`text-base font-medium transition-all cursor-pointer ${todo.completed ? "line-through text-neutral-500" : "text-neutral-200"}`}
-                        >
-                            {todo.text}
-                        </span>
-                     )}
-                     
-                     {/* Tags & Meta */}
-                     <div className="flex items-center gap-3">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full bg-opacity-10 border border-opacity-20 flex items-center gap-1 font-medium
-                            ${CATEGORIES.find(c => c.name === todo.category)?.color.replace('bg-', 'bg-')} 
-                            ${CATEGORIES.find(c => c.name === todo.category)?.color.replace('bg-', 'text-')}
-                            ${CATEGORIES.find(c => c.name === todo.category)?.color.replace('bg-', 'border-')}
-                        `}>
-                            {todo.category}
-                        </span>
-
-                        {todo.priority !== "Medium" && (
-                            <span className={`text-[10px] flex items-center gap-1 border px-1.5 py-0.5 rounded-md ${PRIORITIES.find(p => p.name === todo.priority)?.color}`}>
-                                <AlertCircle size={10} fill="currentColor" /> {todo.priority}
-                            </span>
-                        )}
-
-                        {todo.dueDate && (
-                             <span className="text-[10px] text-neutral-500 flex items-center gap-1">
-                                <Calendar size={10} /> {todo.dueDate}
-                             </span>
-                        )}
-                     </div>
-                  </div>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pl-2">
-                  {!todo.completed && (
-                    <>
-                        <button 
-                            onClick={() => { playPop(); setFocusMode({ active: true, task: todo.text }); setTimeLeft(25*60); setIsTimerRunning(true); }}
-                            className="p-2 text-neutral-400 hover:text-purple-400 hover:bg-purple-400/10 rounded-lg transition-colors"
-                            title="Focus Mode"
-                        >
-                            <Clock size={16} />
+                    <div className="flex items-center gap-4 flex-1">
+                      <button onClick={() => toggleTodo(todo.id)} className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${todo.completed ? "bg-purple-500 border-purple-500" : "border-neutral-600 hover:border-purple-400"}`}>
+                        {todo.completed && <Check size={12} strokeWidth={4} />}
+                      </button>
+                      <div>
+                          <p className={`text-base font-medium ${todo.completed ? "line-through text-neutral-500" : "text-neutral-200"}`}>{todo.text}</p>
+                          <div className="flex gap-2 mt-1">
+                              <span className={`text-[10px] px-1.5 rounded bg-opacity-10 text-opacity-80 ${CATEGORIES.find(c => c.name === todo.category)?.color.replace('bg-', 'bg-')} ${CATEGORIES.find(c => c.name === todo.category)?.color.replace('bg-', 'text-')}`}>{todo.category}</span>
+                              {todo.dueDate && <span className="text-[10px] text-neutral-500 flex items-center gap-1"><Calendar size={10}/> {todo.dueDate}</span>}
+                          </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                         {!todo.completed && <button onClick={() => { setTimerTask(todo.text); setShowTimer(true); }} className="p-2 text-neutral-400 hover:text-purple-400"><Zap size={16} /></button>}
+                         <button onClick={() => deleteItem(todo.id)} className="p-2 text-neutral-400 hover:text-red-400"><Trash2 size={16} /></button>
+                    </div>
+                  </motion.div>
+                )) : <div className="text-center text-neutral-600 py-10">All tasks completed! Chill time.</div>
+            ) : (
+                // HABITS LIST
+                habits.length > 0 ? habits.map((habit) => (
+                    <motion.div
+                      key={habit.id} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }}
+                      className={`flex items-center justify-between p-4 rounded-xl border transition-all ${habit.completedToday ? "bg-green-500/10 border-green-500/30" : "bg-neutral-900/60 border-neutral-800"}`}
+                    >
+                      <div className="flex items-center gap-4 flex-1">
+                        <button onClick={() => toggleHabit(habit.id)} className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all shadow-sm ${habit.completedToday ? "bg-green-500 text-white" : "bg-neutral-800 text-neutral-500 hover:bg-neutral-700"}`}>
+                          {habit.completedToday ? <Check size={20} strokeWidth={3} /> : <Repeat size={20} />}
                         </button>
-                        <button 
-                            onClick={() => startEditing(todo)}
-                            className="p-2 text-neutral-400 hover:text-blue-400 hover:bg-blue-400/10 rounded-lg transition-colors"
-                            title="Edit"
-                        >
-                            <Edit2 size={16} />
-                        </button>
-                    </>
-                  )}
-                  <button
-                    onClick={() => deleteTodo(todo.id)}
-                    className="p-2 text-neutral-400 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
-                    title="Delete"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </motion.div>
-            ))}
+                        <div>
+                            <p className={`text-base font-medium ${habit.completedToday ? "text-green-400" : "text-neutral-200"}`}>{habit.text}</p>
+                            <p className="text-xs text-neutral-500 mt-0.5 flex items-center gap-1">
+                                <Zap size={10} className={habit.completedToday ? "text-yellow-400" : "text-neutral-600"} fill={habit.completedToday ? "currentColor" : "none"}/> 
+                                Current streak: <span className="text-white font-bold">{habit.streak} days</span>
+                            </p>
+                        </div>
+                      </div>
+                      <button onClick={() => deleteItem(habit.id)} className="p-2 text-neutral-600 hover:text-red-400"><Trash2 size={16} /></button>
+                    </motion.div>
+                )) : <div className="text-center text-neutral-600 py-10">Start a new habit today.</div>
+            )}
           </AnimatePresence>
-          
-          {todos.length === 0 && (
-            <div className="text-center py-12 opacity-50">
-                <Sparkles size={32} className="mx-auto mb-3 text-purple-400" />
-                <p className="text-neutral-400 text-sm">Danh sách trống trơn.</p>
-                <p className="text-neutral-600 text-xs mt-1">Thêm việc gì đó ngầu ngầu đi...</p>
-            </div>
-          )}
         </div>
       </div>
     </div>
